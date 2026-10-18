@@ -13,6 +13,7 @@ firebase-debug.*.log*
 # Environment credentials
 .env
 .env.*
+backend/certs
 !.env.example
 backend/.env
 frontend/.env

@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import fs from 'node:fs';
 import mysql from 'mysql2/promise';
 
 dotenv.config();
@@ -10,6 +11,10 @@ if (missing.length) {
 }
 
 export const dbConfigured = missing.length === 0;
+const ssl = process.env.DB_SSL_CA
+  ? { ca: fs.readFileSync(process.env.DB_SSL_CA), rejectUnauthorized: true }
+  : undefined;
+
 export const pool = mysql.createPool({
   host: process.env.DB_HOST || 'invalid-unconfigured-host',
   port: Number(process.env.DB_PORT || 3306),
@@ -19,7 +24,8 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  charset: 'utf8mb4'
+  charset: 'utf8mb4',
+  ssl
 });
 
 export async function checkDatabase() {

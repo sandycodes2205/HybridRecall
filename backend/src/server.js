@@ -40,6 +40,26 @@ app.get('/api/health', asyncRoute(async (_req, res) => {
 
 app.get('/api/authors', dbOnly(async (_req, res) => { const [rows] = await pool.query('SELECT author_id, name, email, affiliation FROM Author ORDER BY name'); res.json(rows); }));
 app.get('/api/reviewers', dbOnly(async (_req, res) => { const [rows] = await pool.query('SELECT reviewer_id, name, email, affiliation, expertise FROM Reviewer ORDER BY name'); res.json(rows); }));
+app.get('/api/people', dbOnly(async (_req, res) => {
+  const [[authors], [reviewers]] = await Promise.all([
+    pool.query('SELECT author_id, name, email, affiliation FROM Author ORDER BY name'),
+    pool.query('SELECT reviewer_id, name, email, affiliation, expertise FROM Reviewer ORDER BY name')
+  ]);
+  res.json({ authors, reviewers });
+}));
+app.post('/api/reviewers', dbOnly(async (req, res) => {
+  const name = requiredText(req.body.name, 'name', 255);
+  const reviewerEmail = email(req.body.email);
+  const affiliation = typeof req.body.affiliation === 'string' ? req.body.affiliation.trim() : '';
+  const expertise = typeof req.body.expertise === 'string' ? req.body.expertise.trim() : '';
+  try {
+    const [result] = await pool.execute('INSERT INTO Reviewer (name, email, affiliation, expertise) VALUES (?, ?, ?, ?)', [name, reviewerEmail, affiliation || null, expertise || null]);
+    res.status(201).json({ reviewer_id: result.insertId, name, email: reviewerEmail, affiliation: affiliation || null, expertise: expertise || null, message: 'Reviewer added.' });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') throw fail(409, 'A reviewer with this email already exists.');
+    throw error;
+  }
+}));
 
 app.post('/api/submissions', dbOnly(async (req, res) => {
   const title = requiredText(req.body.title, 'title', 255);
@@ -80,10 +100,12 @@ app.get('/api/submissions/:id', dbOnly(async (req, res) => {
   const id = positiveId(req.params.id, 'submission_id');
   const [submissions] = await pool.execute('SELECT s.*, ROUND(AVG(r.score), 2) AS average_score FROM Submission s LEFT JOIN ReviewAssignment ra ON ra.submission_id=s.submission_id LEFT JOIN Review r ON r.assignment_id=ra.assignment_id WHERE s.submission_id=? GROUP BY s.submission_id', [id]);
   if (!submissions[0]) throw fail(404, 'Submission not found.');
-  const [authors] = await pool.execute('SELECT a.* FROM Author a JOIN SubmissionAuthor sa ON sa.author_id=a.author_id WHERE sa.submission_id=? ORDER BY sa.author_order', [id]);
-  const [reviews] = await pool.execute('SELECT r.review_id, r.score, r.comments, r.submitted_at, rv.name AS reviewer_name, ra.assignment_id FROM Review r JOIN ReviewAssignment ra ON ra.assignment_id=r.assignment_id JOIN Reviewer rv ON rv.reviewer_id=ra.reviewer_id WHERE ra.submission_id=? ORDER BY r.submitted_at', [id]);
-  const [flags] = await pool.execute('SELECT * FROM SimilarityFlag WHERE submission_id=? ORDER BY similarity_score DESC', [id]);
-  const [audit] = await pool.execute('SELECT * FROM AuditLog WHERE submission_id=? ORDER BY created_at DESC', [id]);
+  const [[authors], [reviews], [flags], [audit]] = await Promise.all([
+    pool.execute('SELECT a.* FROM Author a JOIN SubmissionAuthor sa ON sa.author_id=a.author_id WHERE sa.submission_id=? ORDER BY sa.author_order', [id]),
+    pool.execute('SELECT r.review_id, r.score, r.comments, r.submitted_at, rv.name AS reviewer_name, ra.assignment_id FROM Review r JOIN ReviewAssignment ra ON ra.assignment_id=r.assignment_id JOIN Reviewer rv ON rv.reviewer_id=ra.reviewer_id WHERE ra.submission_id=? ORDER BY r.submitted_at', [id]),
+    pool.execute('SELECT sf.*, compared.title AS compared_submission_title FROM SimilarityFlag sf JOIN Submission compared ON compared.submission_id=sf.compared_submission_id WHERE sf.submission_id=? ORDER BY sf.similarity_score DESC', [id]),
+    pool.execute('SELECT * FROM AuditLog WHERE submission_id=? ORDER BY created_at DESC', [id])
+  ]);
   res.json({ ...submissions[0], authors, reviews, similarity_flags: flags, audit });
 }));
 

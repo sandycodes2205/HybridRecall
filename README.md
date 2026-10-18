@@ -19,6 +19,14 @@ Open two VS Code terminals in the `HybridRecal` folder.
 
 Test `http://localhost:5000/api/health`. It should report `backend: "up"` and a healthy database after valid credentials and schema are available.
 
+## Aiven and Vercel deployment
+
+The backend connects directly to Aiven for MySQL using `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_SSL_CA`. No local MySQL server is needed. Keep these values and the Aiven CA certificate out of Git.
+
+The Vite proxy only works during local development. When deploying the frontend to Vercel, set `VITE_API_BASE_URL` in the Vercel project environment variables to the public HTTPS URL of the deployed Express backend, without a trailing slash. For example: `https://api.example.com`.
+
+The Express backend itself must be deployed separately to a service that can run a persistent Node.js server, unless it is explicitly converted to Vercel serverless functions.
+
 ## Database scripts and coordination
 
 The database owner must review and execute `database/schema.sql` on a fresh database or compare it carefully with an existing shared schema. It creates the eight required InnoDB tables, constraints, indexes, `AvgScore`, and `FinalizeDecision`. `database/seed.sql` is optional sample data. `database/test_queries.sql` contains read-only checks.
