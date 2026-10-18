@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS Reviewer (
   reviewer_id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255) NOT NULL, email VARCHAR(320) NOT NULL UNIQUE, affiliation VARCHAR(255), expertise VARCHAR(500), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS Submission (
-  submission_id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(255) NOT NULL, abstract TEXT NOT NULL, status ENUM('SUBMITTED','UNDER_REVIEW','ACCEPTED','REJECTED') NOT NULL DEFAULT 'SUBMITTED', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, finalized_at TIMESTAMP NULL, INDEX idx_submission_status(status)
+  submission_id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(255) NOT NULL, abstract TEXT NOT NULL, status ENUM('SUBMITTED','UNDER_REVIEW','ACCEPTED','REJECTED','WITHDRAWN') NOT NULL DEFAULT 'SUBMITTED', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, finalized_at TIMESTAMP NULL, INDEX idx_submission_status(status)
 ) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS SubmissionAuthor (
   submission_id INT NOT NULL, author_id INT NOT NULL, author_order INT NOT NULL DEFAULT 1, PRIMARY KEY(submission_id, author_id), UNIQUE KEY uq_submission_author_order(submission_id, author_order), FOREIGN KEY(submission_id) REFERENCES Submission(submission_id) ON DELETE CASCADE, FOREIGN KEY(author_id) REFERENCES Author(author_id) ON DELETE RESTRICT
@@ -36,6 +36,7 @@ BEGIN
   SELECT status INTO current_status FROM Submission WHERE submission_id=p_submission_id FOR UPDATE;
   IF current_status IS NULL THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Submission not found'; END IF;
   IF current_status IN ('ACCEPTED','REJECTED') THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Submission is already finalized'; END IF;
+  IF current_status = 'WITHDRAWN' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Submission is withdrawn'; END IF;
   SELECT COUNT(*), AvgScore(p_submission_id) INTO review_count, average_score FROM Review r JOIN ReviewAssignment ra ON ra.assignment_id=r.assignment_id WHERE ra.submission_id=p_submission_id;
   IF review_count < 2 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='At least two submitted reviews are required'; END IF;
   SET next_status = IF(average_score >= 7.0, 'ACCEPTED', 'REJECTED');

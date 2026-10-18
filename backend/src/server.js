@@ -51,10 +51,10 @@ app.post('/api/reviewers', dbOnly(async (req, res) => {
   const name = requiredText(req.body.name, 'name', 255);
   const reviewerEmail = email(req.body.email);
   const affiliation = typeof req.body.affiliation === 'string' ? req.body.affiliation.trim() : '';
-  const expertise = typeof req.body.expertise === 'string' ? req.body.expertise.trim() : '';
+  const expertise = requiredText(req.body.expertise, 'expertise', 500);
   try {
-    const [result] = await pool.execute('INSERT INTO Reviewer (name, email, affiliation, expertise) VALUES (?, ?, ?, ?)', [name, reviewerEmail, affiliation || null, expertise || null]);
-    res.status(201).json({ reviewer_id: result.insertId, name, email: reviewerEmail, affiliation: affiliation || null, expertise: expertise || null, message: 'Reviewer added.' });
+    const [result] = await pool.execute('INSERT INTO Reviewer (name, email, affiliation, expertise) VALUES (?, ?, ?, ?)', [name, reviewerEmail, affiliation || null, expertise]);
+    res.status(201).json({ reviewer_id: result.insertId, name, email: reviewerEmail, affiliation: affiliation || null, expertise, message: 'Reviewer added.' });
   } catch (error) {
     if (error.code === 'ER_DUP_ENTRY') throw fail(409, 'A reviewer with this email already exists.');
     throw error;
@@ -114,6 +114,7 @@ app.post('/api/submissions/:id/assignments', dbOnly(async (req, res) => {
   const reviewerId = positiveId(req.body.reviewer_id, 'reviewer_id');
   const [submission] = await pool.execute('SELECT abstract, status FROM Submission WHERE submission_id=?', [submissionId]);
   if (!submission[0]) throw fail(404, 'Submission not found.');
+  if (submission[0].status === 'WITHDRAWN') throw fail(409, 'Withdrawn submissions cannot receive reviewer assignments.');
   const [reviewer] = await pool.execute('SELECT email FROM Reviewer WHERE reviewer_id=?', [reviewerId]);
   if (!reviewer[0]) throw fail(404, 'Reviewer not found.');
   const [conflict] = await pool.execute('SELECT 1 FROM SubmissionAuthor sa JOIN Author a ON a.author_id=sa.author_id WHERE sa.submission_id=? AND LOWER(a.email)=LOWER(?)', [submissionId, reviewer[0].email]);
@@ -121,12 +122,33 @@ app.post('/api/submissions/:id/assignments', dbOnly(async (req, res) => {
   try { const [result] = await pool.execute('INSERT INTO ReviewAssignment (submission_id, reviewer_id) VALUES (?, ?)', [submissionId, reviewerId]); await pool.execute("UPDATE Submission SET status='UNDER_REVIEW' WHERE submission_id=? AND status='SUBMITTED'", [submissionId]); await pool.execute('INSERT INTO AuditLog (submission_id, action, details) VALUES (?, ?, ?)', [submissionId, 'REVIEWER_ASSIGNED', `Reviewer ${reviewerId} assigned.`]); res.status(201).json({ assignment_id: result.insertId, message: 'Reviewer assigned.' }); } catch (error) { if (error.code === 'ER_DUP_ENTRY') throw fail(409, 'This reviewer is already assigned.'); throw error; }
 }));
 
+app.post('/api/submissions/:id/withdraw', dbOnly(async (req, res) => {
+  const submissionId = positiveId(req.params.id, 'submission_id');
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [submissions] = await connection.execute('SELECT status FROM Submission WHERE submission_id=? FOR UPDATE', [submissionId]);
+    if (!submissions[0]) throw fail(404, 'Submission not found.');
+    if (['ACCEPTED', 'REJECTED'].includes(submissions[0].status)) throw fail(409, 'Finalized submissions cannot be withdrawn.');
+    if (submissions[0].status === 'WITHDRAWN') throw fail(409, 'Submission is already withdrawn.');
+    await connection.execute("UPDATE Submission SET status='WITHDRAWN', finalized_at=NULL WHERE submission_id=?", [submissionId]);
+    await connection.execute('INSERT INTO AuditLog (submission_id, action, details) VALUES (?, ?, ?)', [submissionId, 'SUBMISSION_WITHDRAWN', 'Submission withdrawn.']);
+    await connection.commit();
+    res.json({ submission_id: submissionId, status: 'WITHDRAWN', message: 'Submission withdrawn.' });
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}));
+
 app.get('/api/assignments', dbOnly(async (req, res) => { const params = []; let where = ''; if (req.query.reviewer_id) { params.push(positiveId(req.query.reviewer_id, 'reviewer_id')); where = 'WHERE ra.reviewer_id=?'; } const [rows] = await pool.execute(`SELECT ra.assignment_id, ra.submission_id, s.title, s.status, ra.reviewer_id, rv.name AS reviewer_name, r.review_id FROM ReviewAssignment ra JOIN Submission s ON s.submission_id=ra.submission_id JOIN Reviewer rv ON rv.reviewer_id=ra.reviewer_id LEFT JOIN Review r ON r.assignment_id=ra.assignment_id ${where} ORDER BY ra.assigned_at DESC`, params); res.json(rows); }));
 
 app.post('/api/assignments/:id/review', dbOnly(async (req, res) => {
   const assignmentId = positiveId(req.params.id, 'assignment_id'); const reviewScore = score(req.body.score, 'score'); const comments = requiredText(req.body.comments, 'comments', 20000);
   const [assignment] = await pool.execute('SELECT ra.*, s.status FROM ReviewAssignment ra JOIN Submission s ON s.submission_id=ra.submission_id WHERE ra.assignment_id=?', [assignmentId]);
-  if (!assignment[0]) throw fail(404, 'Assignment not found.'); if (assignment[0].status === 'ACCEPTED' || assignment[0].status === 'REJECTED') throw fail(409, 'Reviews cannot be modified after finalization.');
+  if (!assignment[0]) throw fail(404, 'Assignment not found.'); if (['ACCEPTED', 'REJECTED', 'WITHDRAWN'].includes(assignment[0].status)) throw fail(409, 'Reviews cannot be submitted for this submission.');
   try { const [result] = await pool.execute('INSERT INTO Review (assignment_id, score, comments) VALUES (?, ?, ?)', [assignmentId, reviewScore, comments]); await pool.execute('INSERT INTO AuditLog (submission_id, action, details) VALUES (?, ?, ?)', [assignment[0].submission_id, 'REVIEW_SUBMITTED', `Review submitted for assignment ${assignmentId}.`]); res.status(201).json({ review_id: result.insertId, message: 'Review submitted.' }); } catch (error) { if (error.code === 'ER_DUP_ENTRY') throw fail(409, 'This assignment already has a review.'); throw error; }
 }));
 

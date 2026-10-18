@@ -34,7 +34,7 @@ BEGIN
    WHERE ra.submission_id = v_submission_id;
 
   IF v_review_count >= 2
-     AND v_status NOT IN ('ACCEPTED', 'REJECTED') THEN
+     AND v_status NOT IN ('ACCEPTED', 'REJECTED', 'WITHDRAWN') THEN
     SET v_next_status = IF(v_average_score >= 7.0, 'ACCEPTED', 'REJECTED');
 
     UPDATE Submission

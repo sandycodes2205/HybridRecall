@@ -44,6 +44,15 @@
   cursor: pointer;
 }
 
+.withdrawn {
+  background: #e8e8e8;
+  color: #4b5563;
+}
+
+.withdraw-button {
+  background: #a61b1b;
+}
+
 /* Keep reviewer assignment and review submission as distinct vertical sections. */
 .grid {
   grid-template-columns: 1fr;
